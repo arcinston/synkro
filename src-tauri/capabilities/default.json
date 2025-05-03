@@ -7,6 +7,11 @@
     "core:default",
     "opener:default",
     "dialog:default",
-    "store:default"
+    "store:default",
+    "fs:default",
+    {
+      "identifier": "fs:scope",
+      "allow": [{ "path": "$HOME" }, { "path": "$HOME/**" }]
+    }
   ]
 }

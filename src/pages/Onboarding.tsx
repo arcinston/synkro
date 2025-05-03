@@ -50,6 +50,7 @@ export const Onboarding = ({ onComplete }: OnboardingProps) => {
     setIsLoading(true);
     try {
       const defaultPath = await homeDir(); // Start dialog in user's home directory
+      console.info('Default path:', defaultPath);
       const selected = await open({
         directory: true, // We want to select a directory
         multiple: false, // Only allow selecting one directory
@@ -111,6 +112,9 @@ export const Onboarding = ({ onComplete }: OnboardingProps) => {
           <CardDescription>
             Let's set up the folder you want to keep synchronized across your
             devices.
+          </CardDescription>
+          <CardDescription>
+            No Servers Required!! Powered by Tauri and Iroh (P2P Magic)
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">

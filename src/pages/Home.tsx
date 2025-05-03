@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { BaseDirectory, readDir } from '@tauri-apps/plugin-fs';
+import { readDir } from '@tauri-apps/plugin-fs';
 import {
   Card,
   CardContent,

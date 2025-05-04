@@ -8,7 +8,7 @@ use rand::rngs::OsRng;
 use tauri::Manager;
 use tokio::sync::Mutex;
 
-pub async fn setup<R: tauri::Runtime>(handle: tauri::AppHandle<R>) -> Result<(AppState)> {
+pub async fn setup<R: tauri::Runtime>(handle: tauri::AppHandle<R>) -> Result<AppState> {
     let data_root = handle.path().app_data_dir()?;
 
     let blobs_root = data_root.join("blob_data");
@@ -52,7 +52,6 @@ pub async fn setup<R: tauri::Runtime>(handle: tauri::AppHandle<R>) -> Result<(Ap
         author_id: Some(author_id),
         router: Some(router), // Store the router
         // Initialize other fields as None initially
-        // namespace_id: None,
         // gossip_topic: None,
         // sync_doc_handle: None,
         // gossip_discovery_handle: None,

@@ -3,6 +3,7 @@
 // Prevents additional console window on Windows in release, DO NOT REMOVE!!
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod commands;
 mod iroh_setup;
 mod state;
 
@@ -11,6 +12,7 @@ use log::{error, info, warn, LevelFilter}; // Import warn
 use state::AppState;
 use std::time::Duration; // For timeouts
 use tauri::{Emitter, Manager}; // Keep State import if used elsewhere, but not needed for shutdown state access this way
+use commands::{get_node_info,send_file,list_files,get_share_ticket}
 
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 #[tauri::command]
@@ -109,7 +111,11 @@ pub fn run() {
                             // 2. Abort the Router task using its handle
                             if let Some(router) = state.router.take() {
                                 info!("Aborting Iroh router task...");
-                                router.shutdown();
+                                router
+                                    .shutdown()
+                                    .await
+                                    .expect("Error in shutting down router");
+
                                 info!("Iroh router task aborted.");
                             } else {
                                 info!("No active router task found.");
@@ -148,7 +154,7 @@ pub fn run() {
         .plugin(tauri_plugin_store::Builder::new().build())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![greet])
+        .invoke_handler(tauri::generate_handler![greet, get_node_info,send_file,list_files,get_share_ticket])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

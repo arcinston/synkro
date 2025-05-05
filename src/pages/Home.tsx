@@ -11,6 +11,7 @@ import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
 import { load } from '@tauri-apps/plugin-store';
 import type { Store } from '@tauri-apps/plugin-store';
+import { invoke } from '@tauri-apps/api/core';
 
 const username = 'FastSync User'; // Replace this with a dynamic way to fetch/store the username in the future
 type TContent = { name: string; type: 'file' | 'directory' };
@@ -43,6 +44,26 @@ const Home: React.FC = () => {
     };
 
     initializeStore();
+  }, []);
+
+  useEffect(() => {
+    const checkIrohLoaded = async () => {
+      try {
+        const response = await invoke('get_node_info');
+        console.info(response);
+
+        toast.info('Iroh is loaded', {
+          description: `Iroh is ready to use. ${response}`,
+        });
+      } catch (err) {
+        console.error('Error checking Iroh status:', err);
+        toast.error('Error Checking Iroh Status', {
+          description: 'Failed to check Iroh status.',
+        });
+      }
+    };
+
+    checkIrohLoaded();
   }, []);
 
   useEffect(() => {

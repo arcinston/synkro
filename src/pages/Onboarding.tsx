@@ -108,7 +108,7 @@ export const Onboarding = ({ onComplete }: OnboardingProps) => {
     <div className="flex items-center justify-center min-h-screen bg-background p-4">
       <Card className="w-full max-w-md">
         <CardHeader>
-          <CardTitle className="text-2xl">Say Hi to Sinky!</CardTitle>
+          <CardTitle className="text-2xl">Say Hi to Synkro!</CardTitle>
           <CardDescription>
             Let's set up the folder you want to keep synchronized across your
             devices.

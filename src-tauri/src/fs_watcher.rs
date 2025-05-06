@@ -1,7 +1,11 @@
 // src/fs_watcher.rs
 
 use anyhow::Result;
-use notify::{Config, Event, RecommendedWatcher, RecursiveMode, Result as NotifyResult, Watcher};
+use log::{error, info, warn};
+use notify::{
+    event::{ModifyKind, RenameMode},
+    Config, Error, Event, RecommendedWatcher, RecursiveMode, Result as NotifyResult, Watcher,
+};
 use serde::Serialize;
 use std::{
     path::PathBuf,
@@ -9,18 +13,27 @@ use std::{
     thread,
     time::Duration,
 };
+use tauri::{AppHandle, Emitter};
 
 // Define a type alias for the events we'll send over the channel
 // We send the whole Result to propagate potential watcher errors
 pub type FileEventResult = NotifyResult<Event>;
 pub type FileEventReceiver = Receiver<FileEventResult>;
 
+#[derive(Clone, Serialize)]
+pub enum FsEventType {
+    Create,
+    Modify,
+    Remove,
+    Error,
+    Other,
+}
+
 // Define a simple serializable struct for the event payload
 #[derive(Clone, Serialize)]
 pub struct FsEventPayload {
-    pub event_type: String, // e.g., "Create", "Modify", "Remove", "Error", "Other"
-    pub paths: Vec<String>, // Paths affected, converted to strings
-    pub message: Option<String>, // Optional extra info or error message
+    pub event_type: FsEventType, // e.g., "Create", "Modify", "Remove", "Error", "Other"
+    pub path: PathBuf,           // Paths affected, converted to strings
 }
 
 /// Starts watching a directory recursively in a separate thread.
@@ -97,4 +110,113 @@ pub fn start_watching(path_to_watch: PathBuf) -> Result<FileEventReceiver> {
 
     // Return the receiver end of the channel to the caller
     Ok(rx)
+}
+
+pub fn handle_watcher(
+    path_to_watch: PathBuf,
+    fs_handle: AppHandle,
+    receiver: Receiver<Result<Event, Error>>,
+) {
+    info!(
+        "Filesystem watcher started successfully for {:?}",
+        path_to_watch
+    );
+
+    // This task will now process events from the receiver channel.
+    // We use spawn_blocking because receiver.recv() is blocking.
+    let blocking_task_handle = fs_handle.clone(); // Clone handle for spawn_blocking
+    tokio::task::spawn_blocking(move || {
+        info!("FS Event processing loop started.");
+        loop {
+            match receiver.recv() {
+                Ok(event_result) => {
+                    // Process the received event or error
+                    let payload = match event_result {
+                        Ok(event) => {
+                            info!(
+                                "FS Event Received: Kind: {:?}, Paths: {:?}",
+                                event.kind, event.paths
+                            );
+
+                            // Get the first path, if any. Handle empty paths gracefully.
+                            // Some events (like AccessMode::Close) might not have paths.
+                            let path = event.paths.get(0).cloned().unwrap_or_else(PathBuf::new);
+
+                            // Determine FsEventType based on notify::EventKind
+                            let event_type = match event.kind {
+                                notify::EventKind::Create(_) => FsEventType::Create,
+                                notify::EventKind::Remove(_) => FsEventType::Remove,
+                                notify::EventKind::Modify(kind) => match kind {
+                                    ModifyKind::Data(_) => FsEventType::Modify, // File content changed
+                                    ModifyKind::Metadata(_) => FsEventType::Modify, // Metadata changed
+                                    ModifyKind::Name(rename_mode) => {
+                                        // Handle different rename scenarios
+                                        match rename_mode {
+                                            RenameMode::To => FsEventType::Create, // Renamed *to* this path (appeared)
+                                            RenameMode::From => FsEventType::Remove, // Renamed *from* this path (disappeared)
+                                            RenameMode::Both => FsEventType::Modify, // Renamed within watched dir (path changes content/identity)
+                                            RenameMode::Any => {
+                                                // Often used for create/delete on some backends
+                                                if path.exists() {
+                                                    info!("-> State Change (Rename/Any): {:?} appeared (Treat as Create/Update)", path);
+                                                    FsEventType::Create
+                                                } else {
+                                                    info!("-> State Change (Rename/Any): {:?} disappeared (Treat as Remove)", path);
+                                                    FsEventType::Remove
+                                                }
+                                            }
+                                            RenameMode::Other => FsEventType::Other, // Unknown rename type
+                                        }
+                                    }
+                                    ModifyKind::Any => FsEventType::Modify, // Generic modify event
+                                    ModifyKind::Other => FsEventType::Other, // Unknown modify type
+                                },
+                                notify::EventKind::Access(_) => {
+                                    // Access events are often noisy and might not signify a change
+                                    // relevant to the frontend. Map to Other or ignore.
+                                    FsEventType::Other
+                                }
+                                notify::EventKind::Other => FsEventType::Other, // Explicitly Other kind from notify
+                                // Use a wildcard arm to catch any future EventKind variants
+                                _ => {
+                                    warn!("Unhandled FS Event Kind: {:?}", event.kind);
+                                    FsEventType::Other
+                                }
+                            };
+
+                            // Construct the payload to send to the frontend
+                            FsEventPayload { event_type, path }
+                        }
+                        Err(err) => {
+                            // Handle errors from the notify watcher itself
+                            warn!("FS Watcher Error: {:?}", err);
+                            FsEventPayload {
+                                event_type: FsEventType::Error,
+                                path: PathBuf::new(), // No specific path for a watcher error
+                            }
+                        }
+                    };
+
+                    // Emit event to frontend
+                    if let Err(e) = blocking_task_handle.emit("fs-event", payload) {
+                        error!("Failed to emit Tauri event 'fs-event': {}", e);
+                    }
+                }
+                Err(recv_error) => {
+                    error!(
+                        "FS Watcher channel error: {}. Watcher thread likely stopped.",
+                        recv_error
+                    );
+                    // Emit a final error event?
+                    let payload = FsEventPayload {
+                        event_type: FsEventType::Other, // Or perhaps a specific Error type?
+                        path: PathBuf::new(),
+                    };
+                    blocking_task_handle.emit("fs-event", payload).ok(); // Best effort emit
+                    break; // Exit the loop
+                }
+            } // <-- Added missing semicolon
+        }
+        info!("FS Event processing loop finished.");
+    }); // <-- Added missing semicolon
 }

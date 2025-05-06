@@ -11,10 +11,10 @@ mod state;
 use std::path::PathBuf;
 
 use commands::{create_ticket, get_blob, get_node_info};
-use fs_watcher::FsEventPayload;
 use iroh_setup::setup;
-use log::{debug, error, info, warn, LevelFilter}; // Import warn
-use tauri::{Emitter, Manager};
+use log::{error, info, warn, LevelFilter};
+
+use tauri::Manager;
 use tauri_plugin_store::StoreExt; // Keep State import if used elsewhere, but not needed for shutdown state access this way
 
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
@@ -65,7 +65,9 @@ pub fn run() {
 
             let store = app.store("store.json")?;
             // Get a value from the store.
-            let path_to_watch_str = store.get("sync-folder-path").expect("Failed to get path to watch from store");
+            let path_to_watch_str = store
+                .get("sync-folder-path")
+                .expect("Failed to get path to watch from store");
             // Remove the store from the resource table
             store.close_resource();
             // --- Spawn Filesystem Watcher Task ---
@@ -76,7 +78,6 @@ pub fn run() {
                 // Determine path to watch (e.g., Documents directory)
                 // In a real app, get this from config or user selection
 
-
                 let path_to_watch_str = path_to_watch_str.as_str().unwrap();
                 let path_to_watch = PathBuf::from(path_to_watch_str);
 
@@ -84,7 +85,10 @@ pub fn run() {
                 if !path_to_watch.exists() {
                     info!("Creating watch directory: {:?}", path_to_watch);
                     if let Err(e) = std::fs::create_dir_all(&path_to_watch) {
-                        error!("Failed to create watch directory {:?}: {}", path_to_watch, e);
+                        error!(
+                            "Failed to create watch directory {:?}: {}",
+                            path_to_watch, e
+                        );
                         return; // Cannot proceed without the directory
                     }
                 }
@@ -94,60 +98,7 @@ pub fn run() {
                 // Start the watcher (which runs in its own std::thread)
                 match fs_watcher::start_watching(path_to_watch.clone()) {
                     Ok(receiver) => {
-                        info!("Filesystem watcher started successfully for {:?}", path_to_watch);
-
-                        // This task will now process events from the receiver channel.
-                        // We use spawn_blocking because receiver.recv() is blocking.
-                        let blocking_task_handle = fs_handle.clone(); // Clone handle for spawn_blocking
-                        tokio::task::spawn_blocking(move || {
-                            debug!("FS Event processing loop started.");
-                            loop {
-                                match receiver.recv() {
-                                    Ok(event_result) => {
-                                        let payload = match event_result {
-                                            Ok(event) => {
-                                                debug!("FS Event Received: Kind: {:?}, Paths: {:?}", event.kind, event.paths);
-                                                // TODO: Add more sophisticated event handling/filtering here
-                                                // For now, just report the kind and paths
-                                                FsEventPayload {
-                                                    event_type: format!("{:?}", event.kind),
-                                                    paths: event.paths.iter()
-                                                        .filter_map(|p| p.to_str().map(String::from))
-                                                        .collect(),
-                                                    message: None,
-                                                }
-                                            }
-                                            Err(err) => {
-                                                warn!("FS Watcher Error: {:?}", err);
-                                                FsEventPayload {
-                                                    event_type: "Error".to_string(),
-                                                    paths: vec![],
-                                                    message: Some(err.to_string()),
-                                                }
-                                            }
-                                        };
-
-                                        // Emit event to frontend
-                                        if let Err(e) = blocking_task_handle.emit("fs-event", payload) {
-                                            error!("Failed to emit Tauri event 'fs-event': {}", e);
-                                        }
-                                    }
-                                    Err(recv_error) => {
-                                        error!("FS Watcher channel error: {}. Watcher thread likely stopped.", recv_error);
-                                        // Emit a final error event?
-                                        let payload = FsEventPayload {
-                                            event_type: "WatcherStopped".to_string(),
-                                            paths: vec![],
-                                            message: Some(recv_error.to_string()),
-                                        };
-                                        blocking_task_handle.emit("fs-event", payload).ok(); // Best effort emit
-                                        break; // Exit the loop
-                                    }
-                                }
-                            }
-                            info!("FS Event processing loop finished.");
-                        }); // End of spawn_blocking
-
+                        fs_watcher::handle_watcher(path_to_watch, fs_handle, receiver);
                     }
                     Err(err) => {
                         error!(
@@ -157,7 +108,6 @@ pub fn run() {
                     }
                 }
             }); // End of FS Watcher spawn
-
 
             Ok(())
         })

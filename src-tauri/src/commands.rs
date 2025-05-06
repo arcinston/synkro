@@ -2,11 +2,13 @@
 
 use std::path::PathBuf;
 
-use crate::state::AppState; // Import the AppState wrapper
+use crate::{
+    iroh_fns::{create_iroh_ticket, get_iroh_blob},
+    state::AppState,
+}; // Import the AppState wrapper
 use iroh::PublicKey;
 // Import necessary types for blobs and docs interaction
-use iroh_blobs::{rpc::client::blobs::WrapOption, ticket::BlobTicket, util::SetTagOption};
-use log::info;
+use iroh_blobs::ticket::BlobTicket;
 use serde::Serialize;
 use tauri::State;
 
@@ -71,19 +73,7 @@ pub async fn get_blob(state: State<'_, AppState>, str_ticket: String) -> Result<
         .clone()
         .ok_or_else(|| "Iroh blobs client not initialized".to_string())?;
 
-    let blobs_client = blobs.client();
-
-    let ticket: BlobTicket = str_ticket
-        .parse()
-        .map_err(|e| format!("Failed to parse blob ticket: {}", e))?;
-
-    let download_req = blobs_client
-        .download(ticket.hash(), ticket.node_addr().clone())
-        .await
-        .map_err(|e| format!("Failed to initiate blob download: {}", e))?;
-
-    download_req
-        .finish()
+    get_iroh_blob(blobs, str_ticket)
         .await
         .map_err(|e| format!("Failed to complete blob download: {}", e))?;
 
@@ -99,30 +89,14 @@ pub async fn create_ticket(state: State<'_, AppState>, filepath: String) -> Resu
         .clone()
         .ok_or_else(|| "Iroh blobs client not initialized".to_string())?;
 
-    let blobs_client = blobs.client();
-
-    let add_progress = blobs_client
-        .add_from_path(path, true, SetTagOption::Auto, WrapOption::NoWrap)
-        .await
-        .map_err(|e| format!("Failed to find Blob from path {}", e))?;
-
-    let blob = add_progress
-        .finish()
-        .await
-        .map_err(|e| format!("Failed to add Blob from path {}", e))?;
-
     let endpoint = state
         .endpoint
         .clone()
         .ok_or_else(|| "Endpoint not initialized".to_string())?;
 
-    let node_id = endpoint.node_id();
-
-    let ticket = BlobTicket::new(node_id.into(), blob.hash, blob.format)
-        .map_err(|e| format!("Error creating Ticket for the blob {}", e))?;
-
-    let str_ticket = ticket.to_string();
-    info!("created str ticket for ticket {}", str_ticket);
+    let str_ticket = create_iroh_ticket(blobs, endpoint, path)
+        .await
+        .map_err(|e| format!("Endpoint not initialized {}", e))?;
 
     Ok(str_ticket)
 }

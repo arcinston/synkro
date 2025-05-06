@@ -5,13 +5,13 @@
 
 mod commands;
 mod fs_watcher;
-mod iroh_setup;
+mod iroh_fns;
 mod state;
 
 use std::path::PathBuf;
 
 use commands::{create_ticket, get_blob, get_node_info};
-use iroh_setup::setup;
+use iroh_fns::setup;
 use log::{error, info, warn, LevelFilter};
 
 use tauri::Manager;

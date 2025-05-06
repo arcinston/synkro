@@ -12,6 +12,7 @@ import { toast } from 'sonner';
 import { load } from '@tauri-apps/plugin-store';
 import type { Store } from '@tauri-apps/plugin-store';
 import { invoke } from '@tauri-apps/api/core';
+import { useFsEvents } from '@/hooks/useFsEvents';
 
 const username = 'FastSync User'; // Replace this with a dynamic way to fetch/store the username in the future
 type TContent = { name: string; type: 'file' | 'directory' };
@@ -23,6 +24,8 @@ const Home: React.FC = () => {
   const [store, setStore] = useState<Store | null>(null);
   const [initialLoadComplete, setInitialLoadComplete] = useState(false);
   const [autoSync, setAutoSync] = useState<boolean>(false);
+
+  useFsEvents();
 
   useEffect(() => {
     const initializeStore = async () => {

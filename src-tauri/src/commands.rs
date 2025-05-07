@@ -100,3 +100,24 @@ pub async fn create_ticket(state: State<'_, AppState>, filepath: String) -> Resu
 
     Ok(str_ticket)
 }
+
+#[tauri::command]
+pub async fn create_gossip_ticket(state: State<'_, AppState>) -> Result<String, String> {
+    let path: PathBuf = PathBuf::from(filepath);
+
+    let gossip = state
+        .gossip
+        .clone()
+        .ok_or_else(|| "Iroh blobs client not initialized".to_string())?;
+
+    let endpoint = state
+        .endpoint
+        .clone()
+        .ok_or_else(|| "Endpoint not initialized".to_string())?;
+
+    let str_gossip_ticket = create_iroh_gossip_ticket(gossip, endpoint, path)
+        .await
+        .map_err(|e| format!("Endpoint not initialized {}", e))?;
+
+    Ok(str_gossip_ticket)
+}

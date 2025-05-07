@@ -15,6 +15,8 @@ use std::{
 };
 use tauri::{AppHandle, Emitter};
 
+use crate::iroh_fns::handle_fs_payload;
+
 // Define a type alias for the events we'll send over the channel
 // We send the whole Result to propagate potential watcher errors
 pub type FileEventResult = NotifyResult<Event>;
@@ -201,7 +203,8 @@ pub fn handle_watcher(
                             }
                         }
                     };
-
+                    // handle iroh jobs to be performed based on the
+                    handle_fs_payload(payload.clone(), blocking_task_handle.clone());
                     // Emit event to frontend
                     if let Err(e) = blocking_task_handle.emit("fs-event", payload) {
                         error!("Failed to emit Tauri event 'fs-event': {}", e);

@@ -3,14 +3,21 @@
 use std::path::PathBuf;
 
 use crate::{
-    iroh_fns::{create_iroh_ticket, get_iroh_blob},
-    state::AppState,
-}; // Import the AppState wrapper
+    iroh_fns::{
+        create_iroh_gossip_ticket,
+        create_iroh_ticket,
+        get_iroh_blob,
+        join_iroh_gossip,
+        subscribe_loop, // Make sure this is correctly imported
+    },
+    state::AppState, // Removed GossipState as gossip_sender is in AppState
+};
 use iroh::PublicKey;
-// Import necessary types for blobs and docs interaction
-use iroh_blobs::ticket::BlobTicket;
+// use iroh_gossip::net::GossipReceiver; // Not directly used here anymore
+use log::{error, info}; // Added error
+                        // Import necessary types for blobs and docs interaction
 use serde::Serialize;
-use tauri::State;
+use tauri::{AppHandle, State}; // Added Manager
 
 // --- Frontend Event Payloads --- (Keep existing ones)
 
@@ -33,6 +40,15 @@ struct DownloadProgress {
     offset: Option<u64>,
     error: Option<String>,
     download_path: Option<String>,
+}
+
+// --- New Gossip Event Payload (can also be in iroh_fns.rs) ---
+#[derive(Clone, Serialize)]
+pub struct GossipEventPayload {
+    // Made public if subscribe_loop is in another module and needs this
+    from: String,
+    topic: String,
+    content_base64: String, // Representing Vec<u8> as base64 for JSON compatibility
 }
 
 // --- Command-Specific Structs --- (Keep existing ones)
@@ -103,21 +119,56 @@ pub async fn create_ticket(state: State<'_, AppState>, filepath: String) -> Resu
 
 #[tauri::command]
 pub async fn create_gossip_ticket(state: State<'_, AppState>) -> Result<String, String> {
-    let path: PathBuf = PathBuf::from(filepath);
-
-    let gossip = state
-        .gossip
-        .clone()
-        .ok_or_else(|| "Iroh blobs client not initialized".to_string())?;
-
     let endpoint = state
         .endpoint
         .clone()
         .ok_or_else(|| "Endpoint not initialized".to_string())?;
 
-    let str_gossip_ticket = create_iroh_gossip_ticket(gossip, endpoint, path)
+    let str_gossip_ticket = create_iroh_gossip_ticket(endpoint)
         .await
         .map_err(|e| format!("Endpoint not initialized {}", e))?;
 
     Ok(str_gossip_ticket)
 }
+
+#[tauri::command]
+pub async fn join_gossip(
+    app_handle: AppHandle,          // Keep AppHandle
+    app_state: State<'_, AppState>, // Renamed from `state` to `app_state` for clarity
+    str_gossip_ticket: String,
+) -> Result<bool, String> {
+    let endpoint = app_state
+        .endpoint
+        .clone()
+        .ok_or_else(|| "Endpoint not initialized".to_string())?;
+    let gossip = app_state
+        .gossip
+        .clone()
+        .ok_or_else(|| "Gossip not initialized".to_string())?;
+
+    let (sender, receiver) = join_iroh_gossip(endpoint, gossip, str_gossip_ticket) // `receiver` is `mut` if `subscribe_loop` needs mutable access, but it takes ownership.
+        .await
+        .map_err(|e| format!("Failed to create Gossip Sender and Receiver: {}", e))?;
+
+    // Correctly store the sender in AppState's Mutex<Option<GossipSender>>
+    let mut gossip_sender_guard = app_state.gossip_sender.lock().await;
+    *gossip_sender_guard = Some(sender);
+    // Drop the guard explicitly if desired, or let it drop at the end of the scope.
+    // drop(gossip_sender_guard);
+
+    // Spawn a task to handle incoming gossip messages
+    // Pass the AppHandle to subscribe_loop so it can emit events
+    let receiver_app_handle = app_handle.clone();
+    tauri::async_runtime::spawn(async move {
+        info!("Gossip receiver task (subscribe_loop) started.");
+        // Assuming subscribe_loop now takes AppHandle and GossipReceiver
+        if let Err(e) = subscribe_loop(receiver_app_handle, receiver).await {
+            error!("Error in subscribe_loop: {:?}", e);
+        }
+        info!("Gossip receiver task (subscribe_loop) finished.");
+    });
+
+    Ok(true)
+}
+
+// Handle incoming events

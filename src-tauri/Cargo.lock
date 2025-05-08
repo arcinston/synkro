@@ -1625,6 +1625,7 @@ dependencies = [
  "fmt",
  "futures",
  "futures-lite",
+ "futures-util",
  "iroh",
  "iroh-blobs",
  "iroh-bytes",

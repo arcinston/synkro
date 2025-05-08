@@ -10,12 +10,12 @@ mod state;
 
 use std::path::PathBuf;
 
-use commands::{create_ticket, get_blob, get_node_info};
+use commands::{create_gossip_ticket, create_ticket, get_blob, get_node_info, join_gossip};
 use iroh_fns::setup;
 use log::{error, info, warn, LevelFilter};
 
 use tauri::Manager;
-use tauri_plugin_store::StoreExt; // Keep State import if used elsewhere, but not needed for shutdown state access this way
+use tauri_plugin_store::StoreExt;
 
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 #[tauri::command]
@@ -119,6 +119,8 @@ pub fn run() {
             greet,
             get_blob,
             create_ticket,
+            create_gossip_ticket,
+            join_gossip,
             get_node_info
         ])
         .run(tauri::generate_context!())

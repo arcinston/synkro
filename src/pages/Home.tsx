@@ -12,6 +12,7 @@ import { toast } from 'sonner';
 import { load } from '@tauri-apps/plugin-store';
 import type { Store } from '@tauri-apps/plugin-store';
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import { useFsEvents } from '@/hooks/useFsEvents';
 
 const username = 'FastSync User'; // Replace this with a dynamic way to fetch/store the username in the future
@@ -24,8 +25,22 @@ const Home: React.FC = () => {
   const [store, setStore] = useState<Store | null>(null);
   const [initialLoadComplete, setInitialLoadComplete] = useState(false);
   const [autoSync, setAutoSync] = useState<boolean>(false);
+  const [gossipTicket, setGossipTicket] = useState<string | null>(null);
 
   useFsEvents();
+
+  useEffect(() => {
+    const unlistenGossipReady = listen<void>('gossip-ready', (event) => {
+      console.info('Gossip network is ready:', event);
+      toast.success('Sync Network Ready', {
+        description: 'Successfully connected to the sync network.',
+      });
+    });
+
+    return () => {
+      unlistenGossipReady.then((unlistenFn) => unlistenFn());
+    };
+  }, []);
 
   useEffect(() => {
     const initializeStore = async () => {
@@ -121,6 +136,25 @@ const Home: React.FC = () => {
     }
   };
 
+  const handleCreateAndCopyGossipTicket = async () => {
+    try {
+      const ticket = await invoke<string>('create_gossip_ticket');
+      setGossipTicket(ticket);
+      await navigator.clipboard.writeText(ticket);
+      toast.success('Gossip Ticket Copied!', {
+        description: 'The gossip ticket has been copied to your clipboard.',
+      });
+    } catch (error) {
+      console.error('Error creating/copying gossip ticket:', error);
+      toast.error('Failed to Create Gossip Ticket', {
+        description:
+          typeof error === 'string'
+            ? error
+            : 'Could not create or copy the gossip ticket.',
+      });
+    }
+  };
+
   if (!initialLoadComplete) {
     return <div>Loading...</div>; // Or any other loading indicator
   }
@@ -167,6 +201,20 @@ const Home: React.FC = () => {
             <Button variant="outline" onClick={toggleAutoSync}>
               {autoSync ? 'Disable Auto-Sync' : 'Enable Auto-Sync'}
             </Button>
+          </div>
+          <div className="space-y-2">
+            <h3 className="text-lg font-semibold">Share Sync Session</h3>
+            <p className="text-muted-foreground">
+              Create a new gossip ticket to invite others to this sync session.
+            </p>
+            <Button variant="default" onClick={handleCreateAndCopyGossipTicket}>
+              Create & Copy Gossip Ticket
+            </Button>
+            {gossipTicket && (
+              <p className="text-sm text-muted-foreground break-all mt-2">
+                Last ticket: {gossipTicket}
+              </p>
+            )}
           </div>
         </CardContent>
       </Card>

@@ -16,6 +16,7 @@ import { load } from '@tauri-apps/plugin-store';
 import type { Store } from '@tauri-apps/plugin-store';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'; // Added for gossip options
 import { Label } from '@/components/ui/label'; // Added for RadioGroup labels
+import { invoke } from '@tauri-apps/api/core';
 
 interface OnboardingProps {
   // Callback when setup is done, now includes gossip ticket info
@@ -142,11 +143,8 @@ export const Onboarding = ({ onComplete }: OnboardingProps) => {
     setIsGossipLoading(true);
     setGeneratedGossipTicket(null); // Clear previous if any
     setInputGossipTicket(''); // Clear input field
-    // Simulate backend call to generate a ticket
-    // Replace with: const ticket = await invoke('generate_gossip_topic_id_command');
-    await new Promise((resolve) => setTimeout(resolve, 1000)); // Mock delay
-    const mockTicket = `mock_topic_id_${Date.now().toString(36)}`;
-    setGeneratedGossipTicket(mockTicket);
+    const ticket = await invoke<string>('create_gossip_ticket');
+    setGeneratedGossipTicket(ticket);
     setGossipOption('generate'); // Ensure this option is selected
     toast.success('Gossip Ticket Generated', {
       description: 'You can share this with other devices.',
@@ -170,10 +168,18 @@ export const Onboarding = ({ onComplete }: OnboardingProps) => {
 
     if (gossipOption === 'generate' && generatedGossipTicket) {
       onComplete(selectedFolder, generatedGossipTicket, true);
+      const response = await invoke<boolean>('join_gossip', {
+        strGossipTicket: generatedGossipTicket,
+      });
+      console.info('join gossip :', response);
       await store.set('gossip-topic-ticket', generatedGossipTicket);
       await store.save();
     } else if (gossipOption === 'input' && inputGossipTicket.trim() !== '') {
       onComplete(selectedFolder, inputGossipTicket.trim(), false);
+      const response = await invoke<boolean>('join_gossip', {
+        strGossipTicket: inputGossipTicket,
+      });
+      console.info('join gossip :', response);
       await store.set('gossip-topic-ticket', inputGossipTicket.trim());
       await store.save();
     } else {

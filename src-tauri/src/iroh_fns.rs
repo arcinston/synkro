@@ -1,6 +1,3 @@
-use std::collections::HashMap;
-use std::path::PathBuf; // Added import
-
 use crate::{
     commands::GossipEventPayload, // Import the payload struct
     fs_watcher::{FsEventPayload, FsEventType},
@@ -10,7 +7,10 @@ use anyhow::{Error, Result};
 use futures_util::StreamExt; // Added import for try_next
 use iroh::{protocol::Router, Endpoint, NodeAddr, SecretKey};
 use iroh_blobs::{
-    net_protocol::Blobs, rpc::client::blobs::WrapOption, store::fs::Store, ticket::BlobTicket,
+    net_protocol::Blobs,
+    rpc::client::blobs::WrapOption,
+    store::{fs::Store, ExportFormat, ExportMode},
+    ticket::BlobTicket,
     util::SetTagOption,
 };
 use iroh_gossip::{
@@ -20,14 +20,16 @@ use iroh_gossip::{
 use log::{error, info, warn}; // Added warn
 use serde::{Deserialize, Serialize};
 use std::fmt;
+use std::path::PathBuf; // Added import
 use std::str::FromStr;
-use tauri::{AppHandle, Manager, State}; // Manager is already here
-                                        // use tokio::sync::Mutex; // Mutex from tokio is not directly used in this file's changes
+use std::sync::Arc;
+use tauri::{AppHandle, Emitter, Manager, State};
+use tokio::sync::Mutex;
 
 #[derive(Debug, Serialize, Deserialize)]
-struct GossipTicket {
-    topic: TopicId,
-    nodes: Vec<NodeAddr>,
+pub struct GossipTicket {
+    pub topic: TopicId,
+    pub nodes: Vec<NodeAddr>,
 }
 
 impl GossipTicket {
@@ -58,7 +60,10 @@ impl FromStr for GossipTicket {
     }
 }
 
-pub async fn setup<R: tauri::Runtime>(handle: tauri::AppHandle<R>) -> Result<()> {
+pub async fn setup<R: tauri::Runtime>(
+    handle: tauri::AppHandle<R>,
+    sync_path: PathBuf,
+) -> Result<()> {
     let data_root = handle.path().app_data_dir()?;
 
     let blobs_root = data_root.join("blob_data");
@@ -118,8 +123,9 @@ pub async fn setup<R: tauri::Runtime>(handle: tauri::AppHandle<R>) -> Result<()>
         blobs: Some(blobs),
         gossip: Some(gossip),
         router: Some(router),
-        gossip_sender: tokio::sync::Mutex::new(None), // Ensure Mutex is from tokio::sync
-        sync_folder: None,
+        gossip_topic: Arc::new(Mutex::new(None)),
+        gossip_sender: Arc::new(Mutex::new(None)), // Ensure Mutex is from tokio::sync
+        sync_folder: sync_path,
         sync_task_handle: None,
     };
 
@@ -127,10 +133,13 @@ pub async fn setup<R: tauri::Runtime>(handle: tauri::AppHandle<R>) -> Result<()>
     Ok(())
 }
 
-pub async fn create_iroh_gossip_ticket(endpoint: Endpoint) -> Result<String, Error> {
+pub async fn create_iroh_gossip_ticket(
+    endpoint: Endpoint,
+    topic_id: TopicId,
+) -> Result<String, Error> {
     let me = endpoint.node_addr().await?;
     let ticket = GossipTicket {
-        topic: TopicId::from_bytes(rand::random()),
+        topic: topic_id,
         nodes: vec![me],
     };
     let str_gossip_ticket = ticket.to_string();
@@ -160,27 +169,80 @@ pub async fn join_iroh_gossip(
     gossip: Gossip,
     str_gossip_ticket: String,
 ) -> Result<(GossipSender, GossipReceiver), Error> {
+    info!(
+        "join_iroh_gossip (iroh_fns.rs) called with ticket: {}",
+        str_gossip_ticket
+    ); // New log
+
     let GossipTicket { topic, nodes } = GossipTicket::from_str(&str_gossip_ticket)?;
-    let node_ids = nodes.iter().map(|p| p.node_id).collect();
+    info!(
+        "Parsed ticket in join_iroh_gossip (iroh_fns.rs), topic: {:?}, nodes: {:?}",
+        topic, nodes
+    ); // New log
+
+    let me = endpoint.node_id();
+
+    // nodes without self node id
+    let nodes = nodes
+        .into_iter()
+        .filter(|node_addr| node_addr.node_id != me)
+        .collect::<Vec<_>>();
+    info!("Attempting to connect to peers: {:?}", nodes); // New log
+
+    let node_ids_to_join = nodes.iter().map(|p| p.node_id).collect::<Vec<_>>();
     if nodes.is_empty() {
-        println!("> waiting for nodes to join us...");
+        info!("No external peers in ticket, or only self. Waiting for others to join us on topic {:?}...", topic);
+    // Changed println to info!
     } else {
-        println!("> trying to connect to {} nodes...", nodes.len());
-        for node in nodes.into_iter() {
-            endpoint.add_node_addr(node)?;
+        info!(
+            "Trying to connect to {} nodes for topic {:?}...",
+            nodes.len(),
+            topic
+        ); // Changed println to info!
+        for node_addr in nodes.iter() {
+            // Iterate over a reference
+            info!("Adding node address: {:?}", node_addr); // New log
+            endpoint.add_node_addr(node_addr.clone())?; // Clone node_addr if needed
         }
+        info!("Finished adding node addresses."); // New log
     };
-    let (sender, receiver) = gossip.subscribe_and_join(topic, node_ids).await?.split();
-    Ok((sender, receiver))
+
+    info!("Calling gossip.subscribe for topic {:?}...", topic); // New log
+    match gossip.subscribe(topic, node_ids_to_join) {
+        Ok(subscription) => {
+            info!("Successfully subscribed and joined topic {:?}.", topic); // New log
+            let (sender, receiver) = subscription.split();
+            Ok((sender, receiver))
+        }
+        Err(e) => {
+            error!("Failed to subscribe topic {:?}: {:?}", topic, e); // New log
+            Err(e.into())
+        }
+    }
 }
 
-pub async fn get_iroh_blob(blobs: Blobs<Store>, str_ticket: String) -> Result<(), Error> {
+pub async fn get_iroh_blob(
+    blobs: Blobs<Store>,
+    str_ticket: String,
+    dest_path: PathBuf,
+) -> Result<(), Error> {
     let blobs_client = blobs.client();
     let ticket: BlobTicket = str_ticket.parse()?;
     let download_req = blobs_client
         .download(ticket.hash(), ticket.node_addr().clone())
         .await?;
     download_req.finish().await?;
+
+    blobs_client
+        .export(
+            ticket.hash(),
+            dest_path,
+            ExportFormat::Blob,
+            ExportMode::Copy,
+        )
+        .await?
+        .finish()
+        .await?;
     Ok(())
 }
 
@@ -192,7 +254,9 @@ pub fn handle_fs_payload(payload: FsEventPayload, handle: AppHandle) {
             let blobs_opt = app_state.blobs.clone();
             let endpoint_opt = app_state.endpoint.clone();
             let file_path = payload.path.clone();
-            let gossip_sender_mutex = app_state.gossip_sender.clone(); // Clone the Arc<Mutex<_>>
+            let sync_folder_path = app_state.sync_folder.clone();
+            let gossip_sender_mutex = app_state.gossip_sender.clone();
+            let gossip_topic_mutex = app_state.gossip_topic.clone();
 
             tauri::async_runtime::spawn(async move {
                 let blobs = match blobs_opt {
@@ -216,27 +280,84 @@ pub fn handle_fs_payload(payload: FsEventPayload, handle: AppHandle) {
                     }
                 };
 
-                match create_iroh_ticket(blobs, endpoint, file_path.clone()).await {
+                match create_iroh_ticket(blobs, endpoint.clone(), file_path.clone()).await {
                     Ok(iroh_ticket) => {
                         info!(
                             "Created Iroh Ticket Successfully for {:?}: {}",
                             file_path, iroh_ticket
                         );
 
-                        let gossip_sender_guard = gossip_sender_mutex.lock().await;
-                        if let Some(sender) = &*gossip_sender_guard {
-                            let message_content: Vec<u8> = iroh_ticket.as_bytes().to_vec();
-                            match sender.broadcast(message_content.into()).await {
-                                // .into() converts Vec<u8> to Bytes
+                        info!(
+                            "Attempting to lock gossip_topic_mutex for file: {:?}",
+                            file_path
+                        );
+                        let gossip_topic_guard = gossip_topic_mutex.lock().await;
+                        let topic_id = if let Some(topic) = &*gossip_topic_guard {
+                            info!(
+                                "Successfully locked and read gossip_topic_mutex for file: {:?}, topic: {:?}",
+                                file_path, topic
+                            );
+                            topic.clone() // Clone the TopicId for use
+                        } else {
+                            warn!(
+                                "Gossip topic not set in AppState. Ticket {} for file {:?} created but cannot be gossiped.",
+                                iroh_ticket, file_path
+                            );
+                            return; // Exit if topic is not set
+                        };
+                        // Drop the guard for gossip_topic_mutex explicitly if needed, or let it go out of scope
+                        drop(gossip_topic_guard);
+
+                        info!(
+                            "Attempting to lock gossip_sender_mutex for file: {:?}",
+                            file_path
+                        );
+                        let sender_guard = gossip_sender_mutex.lock().await;
+                        info!(
+                            "Successfully locked gossip_sender_mutex for file: {:?}",
+                            file_path
+                        );
+
+                        if let Some(sender) = &*sender_guard {
+                            let relative_path = match file_path.strip_prefix(&sync_folder_path) {
+                                Ok(p) => p.to_path_buf(),
+                                Err(e) => {
+                                    error!(
+                                        "Failed to create relative path for {:?} from base {:?}: {}",
+                                        file_path, sync_folder_path, e
+                                    );
+                                    // If we can't determine the relative path, we can't form a meaningful gossip message.
+                                    return;
+                                }
+                            }.to_string_lossy().into_owned();
+
+                            let file_name = match file_path.file_name() {
+                                Some(name_os_str) => name_os_str.to_string_lossy().into_owned(),
+                                None => {
+                                    error!("Failed to get file name from path: {:?}", file_path);
+                                    // If there's no file name, we can't form a meaningful gossip message.
+                                    return;
+                                }
+                            };
+
+                            let gossip_message = GossipEventPayload {
+                                from: endpoint.node_id(),
+                                topic: topic_id, // Use the cloned and verified topic_id
+                                message_content: iroh_ticket.clone(),
+                                file_name,     // This is now a String, shorthand is fine
+                                relative_path, // This is now a PathBuf, shorthand is fine
+                            };
+                            info!("gossip message created {:?}", gossip_message);
+                            match sender.broadcast(gossip_message.to_vec().into()).await {
                                 Ok(_) => info!("Gossiped ticket: {}", iroh_ticket),
                                 Err(e) => {
-                                    error!("Failed to gossip ticket {}: {:?}", iroh_ticket, e)
+                                    error!("Failed to gossip ticket {}: {:?}", iroh_ticket, e);
                                 }
                             }
                         } else {
                             warn!(
-                                "Gossip sender not available. Ticket {} created but not gossiped.",
-                                iroh_ticket
+                                "Gossip sender not available. Ticket {} for file {:?} created but not gossiped.",
+                                iroh_ticket, file_path
                             );
                         }
                     }
@@ -257,14 +378,10 @@ pub fn handle_fs_payload(payload: FsEventPayload, handle: AppHandle) {
 // Updated subscribe_loop to accept AppHandle and emit events
 pub async fn subscribe_loop<R: tauri::Runtime>(
     app_handle: AppHandle<R>,
+    blobs: Blobs<Store>,
+    sync_path: PathBuf,
     mut receiver: GossipReceiver,
 ) -> Result<()> {
-    // The HashMap for names is specific to an example message format.
-    // If your messages are different, you might not need it or need different logic.
-    // For now, I'll keep it to show how one might handle structured messages if desired.
-    let mut _names = HashMap::new(); // Kept for structure, but not used with current raw emit
-
-    // Iterate over all events from the gossip receiver stream
     while let Some(result) = receiver.next().await {
         // Changed from try_next to next for typical stream handling
         match result {
@@ -278,13 +395,25 @@ pub async fn subscribe_loop<R: tauri::Runtime>(
                     );
 
                     // Emit the raw message (or a structured version) to the frontend
-                    let payload = GossipEventPayload {
-                        from: msg.from.to_string(),
-                        topic: msg.topic.to_string(),
-                        content_base64: base64::encode(&msg.content), // Using base64 crate
-                    };
+                    let payload = GossipEventPayload::from_bytes(&msg.content).unwrap();
+                    let sync_path_clone = sync_path.clone();
+                    info!("GossipEventPayload: {:?}", payload);
+                    let payload_clone = payload.clone();
+                    let blobs_clone = blobs.clone();
+                    tauri::async_runtime::spawn(async move {
+                        let str_iroh_ticket = payload_clone.message_content;
+                        let dest_path = sync_path_clone.join(&payload_clone.relative_path);
+                        match get_iroh_blob(blobs_clone, str_iroh_ticket, dest_path).await {
+                            Ok(_) => {
+                                info!("Fetching Iroh blob from the ticket");
+                            }
+                            Err(e) => {
+                                error!("Error fetching iroh blob from the ticket {}", e);
+                            }
+                        }
+                    });
 
-                    if let Err(e) = app_handle.emit_all("gossip://message", payload) {
+                    if let Err(e) = app_handle.emit("gossip://message", payload) {
                         error!("Failed to emit gossip message to frontend: {}", e);
                     }
 

@@ -47,12 +47,24 @@ pub fn run() {
                 }
             }
 
+            let store = app.store("store.json")?;
+            let path_to_watch_str = store
+                .get("sync-folder-path")
+                .expect("Failed to get path to watch from store");
+
+            let path_to_watch_str = path_to_watch_str.as_str().unwrap();
+            let path_to_watch = PathBuf::from(path_to_watch_str);
+            let path_to_watch_clone = PathBuf::from(path_to_watch_str);
+
+            // Remove the store from the resource table
+            store.close_resource();
+
             // Spawn the async Iroh setup task
             let iroh_handle = handle.clone();
             tauri::async_runtime::spawn(async move {
                 info!("Starting Iroh setup...");
                 // Clone handle again for use inside this task
-                match setup(iroh_handle.clone()).await {
+                match setup(iroh_handle.clone(), path_to_watch_clone).await {
                     // Pass cloned handle
                     Ok(()) => {
                         info!("Iroh Setup successful")
@@ -63,13 +75,6 @@ pub fn run() {
                 }
             });
 
-            let store = app.store("store.json")?;
-            // Get a value from the store.
-            let path_to_watch_str = store
-                .get("sync-folder-path")
-                .expect("Failed to get path to watch from store");
-            // Remove the store from the resource table
-            store.close_resource();
             // --- Spawn Filesystem Watcher Task ---
             let fs_handle = handle.clone(); // Clone handle for FS Watcher task
             tauri::async_runtime::spawn(async move {
@@ -77,9 +82,6 @@ pub fn run() {
 
                 // Determine path to watch (e.g., Documents directory)
                 // In a real app, get this from config or user selection
-
-                let path_to_watch_str = path_to_watch_str.as_str().unwrap();
-                let path_to_watch = PathBuf::from(path_to_watch_str);
 
                 // Ensure the directory exists (create if it doesn't)
                 if !path_to_watch.exists() {

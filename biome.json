@@ -28,7 +28,7 @@
     "enabled": true
   },
   "files": {
-    "ignore": ["node_modules", "dist", "gen/*"]
+    "ignore": ["node_modules", "dist", "gen/*", "src-tauri"]
   },
   "javascript": {
     "formatter": {

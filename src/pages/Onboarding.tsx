@@ -124,6 +124,7 @@ export const Onboarding = ({ onComplete }: OnboardingProps) => {
   // Renamed to be specific to folder selection step
   const handleContinueAfterFolderSelect = () => {
     if (selectedFolder) {
+      invoke('setup_iroh_and_fs');
       console.info('Proceeding to gossip setup with folder:', selectedFolder);
       setOnboardingStep('gossipSetup'); // Transition to the next step
     } else {

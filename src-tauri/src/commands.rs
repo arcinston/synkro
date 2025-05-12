@@ -3,16 +3,19 @@
 use std::{path::PathBuf, str::FromStr};
 
 use crate::{
+    fs_watcher,
     iroh_fns::{
         create_iroh_gossip_ticket,
         create_iroh_ticket,
         get_iroh_blob,
         join_iroh_gossip,
+        setup,
         subscribe_loop,
         GossipTicket, // Make sure this is correctly imported
     },
     state::AppState, // Removed GossipState as gossip_sender is in AppState
 };
+use anyhow::Error;
 use iroh::{NodeId, PublicKey};
 use iroh_gossip::proto::TopicId;
 // use iroh_gossip::net::GossipReceiver; // Not directly used here anymore
@@ -274,3 +277,78 @@ pub async fn join_gossip(
 }
 
 // Handle incoming events
+#[tauri::command]
+pub async fn setup_iroh_and_fs(app: AppHandle) -> Result<(), String> {
+    handle_setup(app)
+        .await
+        .map_err(|e| format!("Iroh & Fs Setup failed {}", e))?;
+
+    Ok(())
+}
+
+pub async fn handle_setup(handle: AppHandle) -> Result<(), Error> {
+    let store = handle.store("store.json")?;
+    let path_to_watch_str = store
+        .get("sync-folder-path")
+        .expect("Failed to get path to watch from store");
+
+    let path_to_watch_str = path_to_watch_str.as_str().unwrap();
+    let path_to_watch = PathBuf::from(path_to_watch_str);
+    let path_to_watch_clone = PathBuf::from(path_to_watch_str);
+
+    // Remove the store from the resource table
+    store.close_resource();
+
+    // Spawn the async Iroh setup task
+    let iroh_handle = handle.clone();
+    tauri::async_runtime::spawn(async move {
+        info!("Starting Iroh setup...");
+        // Clone handle again for use inside this task
+        match setup(iroh_handle.clone(), path_to_watch_clone).await {
+            // Pass cloned handle
+            Ok(()) => {
+                info!("Iroh Setup successful")
+            }
+            Err(err) => {
+                error!("❌❌❌ Iroh setup failed: {:?}", err);
+            }
+        }
+    });
+
+    // --- Spawn Filesystem Watcher Task ---
+    let fs_handle = handle.clone(); // Clone handle for FS Watcher task
+    tauri::async_runtime::spawn(async move {
+        info!("Starting Filesystem Watcher setup...");
+
+        // Determine path to watch (e.g., Documents directory)
+        // In a real app, get this from config or user selection
+
+        // Ensure the directory exists (create if it doesn't)
+        if !path_to_watch.exists() {
+            info!("Creating watch directory: {:?}", path_to_watch);
+            if let Err(e) = std::fs::create_dir_all(&path_to_watch) {
+                error!(
+                    "Failed to create watch directory {:?}: {}",
+                    path_to_watch, e
+                );
+                return; // Cannot proceed without the directory
+            }
+        }
+
+        info!("Attempting to watch: {:?}", path_to_watch);
+
+        // Start the watcher (which runs in its own std::thread)
+        match fs_watcher::start_watching(path_to_watch.clone()) {
+            Ok(receiver) => {
+                fs_watcher::handle_watcher(path_to_watch, fs_handle, receiver);
+            }
+            Err(err) => {
+                error!(
+                    "❌❌❌ Failed to start filesystem watcher for path {:?}: {:?}",
+                    path_to_watch, err
+                );
+            }
+        }
+    }); // End of FS Watcher spawn
+    Ok(())
+}

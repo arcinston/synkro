@@ -5,7 +5,7 @@ use crate::{
 };
 use anyhow::{Error, Result};
 use futures_util::StreamExt; // Added import for try_next
-use iroh::{protocol::Router, Endpoint, NodeAddr, SecretKey};
+use iroh::{protocol::Router, Endpoint, NodeAddr, RelayMode, SecretKey};
 use iroh_blobs::{
     net_protocol::Blobs,
     rpc::client::blobs::WrapOption,
@@ -100,6 +100,8 @@ pub async fn setup<R: tauri::Runtime>(
     let endpoint = Endpoint::builder()
         .secret_key(secret_key)
         .discovery_n0()
+        .discovery_local_network()
+        .relay_mode(RelayMode::Default)
         .bind()
         .await?;
     println!("> our node id: {}", endpoint.node_id());

@@ -26,6 +26,8 @@ const Home: React.FC = () => {
   const [initialLoadComplete, setInitialLoadComplete] = useState(false);
   const [autoSync, setAutoSync] = useState<boolean>(false);
   const [gossipTicket, setGossipTicket] = useState<string | null>(null);
+  const [clipboardSharingEnabled, setClipboardSharingEnabled] = useState<boolean>(false); // Added
+  const [isLoadingClipboardState, setIsLoadingClipboardState] = useState<boolean>(true); // Added
 
   useFsEvents();
 
@@ -64,6 +66,26 @@ const Home: React.FC = () => {
     initializeStore();
   }, []);
 
+  // Effect to fetch initial clipboard sharing state
+  useEffect(() => {
+    const fetchClipboardState = async () => {
+      setIsLoadingClipboardState(true);
+      try {
+        const enabled = await invoke<boolean>('is_clipboard_sharing_enabled');
+        setClipboardSharingEnabled(enabled);
+      } catch (error) {
+        console.error('Error fetching clipboard sharing state:', error);
+        toast.error('Failed to load clipboard state');
+      } finally {
+        setIsLoadingClipboardState(false);
+      }
+    };
+
+    if (initialLoadComplete) { // Ensure store and other initial setup is done
+      fetchClipboardState();
+    }
+  }, [initialLoadComplete]);
+
   useEffect(() => {
     const checkIrohLoaded = async () => {
       try {
@@ -71,7 +93,7 @@ const Home: React.FC = () => {
         console.info(response);
 
         toast.info('Iroh is loaded', {
-          description: `Iroh is ready to use. ${response}`,
+          description: `Iroh is ready to use. ${response as string}`, // Added as string
         });
       } catch (err) {
         console.error('Error checking Iroh status:', err);
@@ -133,6 +155,23 @@ const Home: React.FC = () => {
       toast.error('Store Error', {
         description: 'Could not save the auto-sync value.',
       });
+    }
+  };
+
+  const toggleClipboardSharing = async () => {
+    const newState = !clipboardSharingEnabled;
+    try {
+      if (newState) {
+        await invoke('enable_clipboard_sharing');
+        toast.success('Universal Clipboard Enabled');
+      } else {
+        await invoke('disable_clipboard_sharing');
+        toast.info('Universal Clipboard Disabled');
+      }
+      setClipboardSharingEnabled(newState);
+    } catch (error) {
+      console.error('Error toggling clipboard sharing:', error);
+      toast.error('Failed to update clipboard sharing preference');
     }
   };
 
@@ -214,6 +253,21 @@ const Home: React.FC = () => {
               <p className="text-sm text-muted-foreground break-all mt-2">
                 Last ticket: {gossipTicket}
               </p>
+            )}
+          </div>
+
+          {/* Universal Clipboard Section */}
+          <div className="space-y-2">
+            <h3 className="text-lg font-semibold">Universal Clipboard</h3>
+            <p className="text-muted-foreground">
+              Share your clipboard content across connected devices.
+            </p>
+            {isLoadingClipboardState ? (
+              <p className="text-muted-foreground">Loading clipboard setting...</p>
+            ) : (
+              <Button variant="outline" onClick={toggleClipboardSharing}>
+                {clipboardSharingEnabled ? 'Disable Universal Clipboard' : 'Enable Universal Clipboard'}
+              </Button>
             )}
           </div>
         </CardContent>

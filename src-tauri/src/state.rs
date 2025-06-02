@@ -6,6 +6,7 @@ use iroh_gossip::{
     net::{Gossip, GossipSender},
     proto::TopicId,
 };
+use crate::clipboard_monitor::ClipboardMonitor; // Add this
 use std::{path::PathBuf, sync::Arc};
 use tokio::{sync::Mutex, task::JoinHandle};
 
@@ -31,4 +32,5 @@ pub struct AppState {
 
     pub sync_folder: PathBuf,
     pub sync_task_handle: Option<JoinHandle<()>>,
+    pub clipboard_monitor: Option<Arc<ClipboardMonitor>>, // Add this
 }

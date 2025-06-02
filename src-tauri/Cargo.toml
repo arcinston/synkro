@@ -22,7 +22,7 @@ tauri = { version = "2", features = [] }
 tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-iroh = { version = "0.34.1", features = [
+iroh = { version = "0.35.0", features = [
     "discovery-local-network",
     "discovery-pkarr-dht",
 ] }
@@ -30,17 +30,17 @@ tauri-plugin-dialog = "2"
 tauri-plugin-store = "2"
 tauri-plugin-fs = "2"
 futures = "0.3.31"
-tokio = "1.44.2"
+tokio = "1.45.1"
 tracing = "0.1.41"
 thiserror = "2.0.12"
-notify = "6.0.1"
+notify = "8.0.0"
 anyhow = "1.0.98"
 tracing-subscriber = "0.3.19"
 walkdir = "2.5.0"
 bytes = "1.10.1"
-iroh-blobs = "0.34.1"
+iroh-blobs = "0.35.0"
 iroh-bytes = "0.15.0"
-iroh-gossip = "0.34.1"
+iroh-gossip = "0.35.0"
 log = "0.4.27"
 futures-lite = "2.6.0"
 blake3 = "1.8.2"

@@ -117,8 +117,7 @@ pub async fn setup<R: tauri::Runtime>(
     let router = builder
         .accept(iroh_blobs::ALPN, blobs.clone())
         .accept(iroh_gossip::ALPN, gossip.clone())
-        .spawn()
-        .await?;
+        .spawn();
 
     let app_state = AppState {
         endpoint: Some(endpoint),
